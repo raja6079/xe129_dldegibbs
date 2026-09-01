@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 
-class MriMask(object):
+class MriMask:
     """ Apply a mask multiplication.
 
     Args:

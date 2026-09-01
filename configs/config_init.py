@@ -161,30 +161,26 @@ def read_yamls(args, params):
             for key, value in data_params.items():
                 if 'dir' in key:
                     data_params[key] = os.path.expanduser(value)
-    except:
-        sys.exit('data config file {} not found'.format(
-            args['data_config_file']))
+    except (FileNotFoundError, OSError):
+        sys.exit(f"data config file {args['data_config_file']} not found")
     try:
         with open(args['model_config_file']) as f:
             model_params = yaml.safe_load(f)
             for key, value in model_params['exp_types'][args['exp_type']].items():
                 model_params['model_params'][key] = value
             del model_params['exp_types']
-    except:
-        sys.exit('model params config file {} not found'.format(
-            args['model_config_file']))
+    except (FileNotFoundError, OSError):
+        sys.exit(f"model params config file {args['model_config_file']} not found")
     try:
         with open(args['optim_config_file']) as f:
             optim_params = yaml.safe_load(f)
-    except:
-        sys.exit('optim params config file {} not found'.format(
-            args['optim_config_file']))
+    except (FileNotFoundError, OSError):
+        sys.exit(f"optim params config file {args['optim_config_file']} not found")
     try:
         with open(args['transforms_config_file']) as f:
             transforms_params = yaml.safe_load(f)
-    except:
-        sys.exit('transforms params config file {} not found'.format(
-            args['transforms_config_file']))
+    except (FileNotFoundError, OSError):
+        sys.exit(f"transforms params config file {args['transforms_config_file']} not found")
 
     params.update({k: v for k, v in data_params.items()})
     params.update({k: v for k, v in model_params.items()})
@@ -192,7 +188,7 @@ def read_yamls(args, params):
     params.update({k: v for k, v in transforms_params.items()})
 
     for key, value in args.items():
-        if not value == None:
+        if value is not None:
             if key == 'gibb_size' or key == 'orig_big':
                 value = literal_eval(value)
             if 'dir' in key:

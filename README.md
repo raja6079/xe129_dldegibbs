@@ -1,40 +1,41 @@
-# DlDegibbs
+# XE129 DlDegibbs (NAFNet Adaptation)
 
-[Paper](https://arxiv.org/abs/1905.04176) | [GitHub](https://github.com/mmuckley/dldegibbs)
+[Original Paper](https://arxiv.org/abs/1905.04176) | [Original Repository](https://github.com/mmuckley/dldegibbs)
 
-A deep learning model trained on ImageNet for removing noise and Gibbs artifacts from diffusion images.
+This repository contains an adaptation of the dldegibbs pipeline for XE129 MRI with a NAFNet-based restoration model.
 
-This repository contains code for reproducing models from the paper, "[Training a Neural Network for Gibbs and Noise Removal in Diffusion MRI](https://arxiv.org/abs/1905.04176)" by M. Muckley et al.
+The original dldegibbs work focused on Gibbs ringing and noise removal for diffusion MRI. In this implementation, the restoration backbone is based on NAFNet to improve robustness and reconstruction quality for the XE129 use case.
 
-This package was developed entirely for research purposes at the NYU School of Medicine and is not affiliated with any other entity. It has not been validated for clinical use.
+This package is intended for research use only and has not been validated for clinical use.
+
+## NAFNet Architecture
+
+The current implementation includes a NAFNet model definition and configuration workflow for training and inference.
+
+- Main model implementation: nafnet.py
+- Model configuration: nafnet_config.py and configs/nafnet.yaml
+- Factory and integration: model_factory.py and degibbs_model.py
+- Inference entry point: infer_xe129.py
+
+![NAFNet architecture](nafnet.png)
 
 ## Usage
 
-The workhorse script is ```degibbs_main.py```. Configuration files are in the ```.yaml``` format and are stored in
-the ```configs/``` folder. Options specified at command line overwrite options
-in the ```.yaml``` files, e.g.,
+The primary training/evaluation entry point is degibbs_main.py. Configuration files are stored in configs/ and use YAML format.
+
+Example:
 
 ```bash
-python dldegibbs_main.py magnitude --exp_dir='my_exp_dir/'
+python degibbs_main.py magnitude --exp_dir="my_exp_dir/"
 ```
 
-should overwrite
+Options passed at the command line override values in the YAML configuration files.
 
-```yaml
-exp_dir: "~/data/logs/diffusion/res_256_to_130/"
-```
+## Pretrained Models
 
-in the ```.yaml``` files.
+If you are using pretrained checkpoints, set the experiment/checkpoint directory in configs/data.yaml to the local path where the model files are stored.
 
-The package was tested using PyTorch 1.1. PyTorch and other packages were
-installed using Anaconda.
-
-## Pretrained models
-
-Pretrained models are available on [GLOBUS](https://app.globus.org/file-manager?origin_id=15c7de28-a76b-11e9-821c-02b7a92d8e58&origin_path=%2F).
-Models from the pretrained experiment are saved based on best MSE on the ImageNet validation data set.
-To use a pretrained model, download one of the model folders from GLOBUS (either `res_256_to_100` if you're working on 100 x 100 images or `res_256_to_130` if you're working on 130 x 130 images) and change the `configs/data.yaml` script `exp_dir` variable to where you save it in your local file system.
-When running `degibbs_main.py`, you should get a message that the script found the file and loaded the model.
+When running degibbs_main.py or infer_xe129.py, the script should report that it located and loaded the checkpoint.
 
 ## Citation
 

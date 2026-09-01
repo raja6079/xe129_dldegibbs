@@ -1,7 +1,7 @@
 import numpy as np
 
 
-class MriInverseFFT(object):
+class MriInverseFFT:
     """Apply the inverse Fourier Transform.
 
     Args:

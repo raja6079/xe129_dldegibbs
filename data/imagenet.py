@@ -45,7 +45,7 @@ class ImageNet(Dataset):
         y = 0.2989 * y[..., 0] + 0.5870 * y[..., 1] + 0.1140 * y[..., 2]
         y = np.squeeze(y)
         y = y / self.dat_norm_fact
-        y = y.astype(dtype=np.complex)
+        y = y.astype(dtype=np.complex128)
 
         for dim, dimsize in enumerate(y.shape):
             slicelist = []

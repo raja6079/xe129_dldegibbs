@@ -32,3 +32,15 @@ exp_types:
     out_ch: 1
     comp2mag: False
     leaky: False
+
+  complex_spiral:
+    in_ch: 2
+    out_ch: 2
+    comp2mag: False
+    leaky: False
+
+  magnitude_spiral:
+    in_ch: 1
+    out_ch: 1
+    comp2mag: False
+    leaky: False

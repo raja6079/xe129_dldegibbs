@@ -3,7 +3,7 @@ import torch
 from scipy.sparse.linalg import svds
 
 
-class MriFFT(object):
+class MriFFT:
     """Apply the forward Fourier Transform.
 
     Args:

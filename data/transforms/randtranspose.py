@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 
-class RandTranspose(object):
+class RandTranspose:
     """Random transpose.
 
     Args:

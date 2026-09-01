@@ -1,7 +1,7 @@
 import numpy as np
 
 
-class MriMargosian(object):
+class MriMargosian:
     """Calculate Margosian partial Fourier reconstruction.
 
     This calculates a Margosian image estimate based on 'dat'. The partial

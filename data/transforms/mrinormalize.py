@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 
-class MriNormalize(object):
+class MriNormalize:
     """Normalization (division)
 
     Args:
@@ -42,7 +42,7 @@ class MriNormalize(object):
         # normalize the data
         if self.percentile_norm is None:
             siglevel = np.mean(np.absolute(dat[0, ...]))
-        elif self.percentile_norm is 'Max':
+        elif self.percentile_norm == 'Max':
             siglevel = np.max(np.absolute(dat[0, ...]))
         else:
             siglevel = np.percentile(np.absolute(

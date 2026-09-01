@@ -1,7 +1,7 @@
 import numpy as np
 
 
-class MriPfPocs(object):
+class MriPfPocs:
     """Calculate POCs Partial Fourier reconstruction.
 
     This calculates a POCs partial Fourier image estimate. Only operates on

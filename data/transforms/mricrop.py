@@ -4,7 +4,7 @@ import numpy as np
 import torch
 
 
-class MriCrop(object):
+class MriCrop:
     """Crop an image to a specified size.
 
     Args:
@@ -55,4 +55,4 @@ class MriCrop(object):
         return sample
 
     def __repr__(self):
-        return self.__class__.__name__ + '(crop_sz={})'.format(self.crop_sz)
+        return self.__class__.__name__ + f'(crop_sz={self.crop_sz})'

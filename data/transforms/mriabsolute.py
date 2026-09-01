@@ -2,7 +2,7 @@ import time
 import numpy as np
 
 
-class MriAbsolute(object):
+class MriAbsolute:
     """Take the absolute value.
 
     Args:

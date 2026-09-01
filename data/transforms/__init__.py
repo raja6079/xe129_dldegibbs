@@ -19,5 +19,6 @@ from .mrirandellipse import MriRandEllipse
 from .mrirandphase import MriRandPhase
 from .mrirandphasebig import MriRandPhaseBig
 from .mriresize import MriResize
+from .mrispiral import MriSpiral
 from .randflip import RandFlip
 from .randtranspose import RandTranspose

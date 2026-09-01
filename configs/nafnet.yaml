@@ -1,0 +1,35 @@
+# NAFNet size presets for the DLDeGibbs pipeline.
+#
+# Each preset defines the U-Net width and the number of NAFBlocks per
+# encoder/decoder level plus the bottleneck. All presets use 4 down/up
+# stages, so input H and W must be divisible by 16.
+
+presets:
+
+  tiny:
+    width: 16
+    enc_blks: [1, 1, 2, 2]
+    middle_blks: 4
+    dec_blks: [1, 1, 1, 1]
+    # ~3.7M params with dw_expand=ffn_expand=2 (NAFNet defaults).
+    # Use for smoke tests and CPU forward-pass timing only.
+
+  small:
+    width: 32
+    enc_blks: [2, 2, 4, 8]
+    middle_blks: 12
+    dec_blks: [2, 2, 2, 2]
+    # ~17M params. Main experimental config for Cartesian DW training.
+
+  base:
+    width: 64
+    enc_blks: [2, 2, 4, 8]
+    middle_blks: 12
+    dec_blks: [2, 2, 2, 2]
+    # ~68M params. Max-performance config for 2x A6000.
+
+# Default block hyperparameters (apply to every NAFBlock unless overridden).
+block_defaults:
+  dw_expand: 2
+  ffn_expand: 2
+  drop_out_rate: 0.0

@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 
-class MriNoise(object):
+class MriNoise:
     """Add complex Gaussian noise.
 
     dat = dat + ComplexGauss(0, siglevel/snr)

@@ -9,7 +9,7 @@ def concat_zpad(arr1, arr2):
 
     for i in range(1, diff_dims):
         pad_size = np.zeros(size=(arr1.ndim, 2))
-        pad_size[i, 0] = np.absolute(diff_dims[i]).astype(np.int) // 2
+        pad_size[i, 0] = np.absolute(diff_dims[i]).astype(int) // 2
         pad_size[i, 1] = np.absolute(diff_dims[i]) - pad_size[i, 0]
 
         pad_size = list(pad_size)
@@ -25,7 +25,7 @@ def concat_zpad(arr1, arr2):
     return np.concatenate((arr1, arr2))
 
 
-class MriRandPhaseBig(object):
+class MriRandPhaseBig:
     """A transform class for applying random phase.
 
     This is designed for larger arrays (> 256). It generates the phase on a
@@ -90,11 +90,11 @@ class MriRandPhaseBig(object):
         if target.shape[0] < target.shape[1]:
             size1 = 256
             size0 = np.floor(
-                target.shape[0]/target.shape[1] * size1).astype(np.int)
+                target.shape[0]/target.shape[1] * size1).astype(int)
         elif target.shape[1] < target.shape[0]:
             size0 = 256
             size1 = np.floor(
-                target.shape[1]/target.shape[0] * size0).astype(np.int)
+                target.shape[1]/target.shape[0] * size0).astype(int)
         else:
             size0 = 256
             size1 = 256
@@ -136,11 +136,11 @@ class MriRandPhaseBig(object):
                     size=num_bfns
                 ) * (bfn_size**2 * 2 * np.pi)
 
-                bfn_size_ind = (i * np.ones(shape=num_bfns)).astype(np.int)
+                bfn_size_ind = (i * np.ones(shape=num_bfns)).astype(int)
                 bfn_x0s = np.floor(np.random.uniform(
-                    high=gauss_dims[0], size=num_bfns)).astype(np.int)
+                    high=gauss_dims[0], size=num_bfns)).astype(int)
                 bfn_y0s = np.floor(np.random.uniform(
-                    high=gauss_dims[1], size=num_bfns)).astype(np.int)
+                    high=gauss_dims[1], size=num_bfns)).astype(int)
 
                 gauss_map[tuple([bfn_size_ind, bfn_x0s, bfn_y0s])] = bfn_amps
 
@@ -189,7 +189,7 @@ def main():
     out_im = phaseob(sample)['dat'][0, ...]
     time_end = time.time()
 
-    print('sim time: {}'.format(time_end - time_start))
+    print(f'sim time: {time_end - time_start}')
 
     plt.imshow(np.angle(out_im))
     plt.gray()

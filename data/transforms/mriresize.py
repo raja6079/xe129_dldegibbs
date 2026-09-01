@@ -2,7 +2,7 @@ import numpy as np
 from skimage.transform import resize
 
 
-class MriResize(object):
+class MriResize:
     """Resize an image using scikit transforms.
 
     The resizing is based on splines. The order of the spline is determined
@@ -85,4 +85,4 @@ class MriResize(object):
         return sample
 
     def __repr__(self):
-        return self.__class__.__name__ + '(output_sz={})'.format(self.output_sz)
+        return self.__class__.__name__ + f'(output_sz={self.output_sz})'

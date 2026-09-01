@@ -7,3 +7,8 @@ __pycache__/
 *.swp
 .vscode/*
 vis_util/
+xe129_dldegibbs_venv/*
+logs/*
+PythonRecon/3T_vent_data_Manchester/*
+PythonRecon/SOS_data/*
+xe129_ardl_venv/*

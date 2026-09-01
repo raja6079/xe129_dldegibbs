@@ -4,13 +4,14 @@ import time
 
 import numpy as np
 import torch
+import torch.distributed as dist
 from torch.utils.tensorboard import SummaryWriter
 
 from mrinet.unet_wavelet import UNetWavelet
 from data.metrics import MetricEval
 
 
-class DeGibbs(object):
+class DeGibbs:
     """A U-Net model for Gibbs artifact correction.
 
     This initializes a wavelet U-Net model intended for artifact correciton in
@@ -83,9 +84,15 @@ class DeGibbs(object):
         self.model = self.model.to(device=device, dtype=dtype)
         self.device = device
         self.dtype = dtype
+        self._rank = 0
 
     def __call__(self, x):
         return self.model(x)
+
+    def _log(self, *args, **kwargs):
+        """Print only from rank 0 in DDP, or always in single-GPU mode."""
+        if self._rank == 0:
+            print(*args, **kwargs)
 
     def load_model(self, model_file, device=None, dtype=None):
         """Loads model parameters from .pt file.
@@ -99,10 +106,10 @@ class DeGibbs(object):
         Returns:
             self
         """
-        if not device == None:
+        if device is not None:
             self.device = device
             self.model = self.model.to(device)
-        if not dtype == None:
+        if dtype is not None:
             self.dtype = dtype
 
         self.model = self.model.to(dtype=dtype)
@@ -110,34 +117,41 @@ class DeGibbs(object):
         pytorch_total_params = sum(
             p.numel() for p in self.model.parameters() if p.requires_grad
         )
-        print("network params: {}".format(pytorch_total_params))
+        self._log(f"network params: {pytorch_total_params}")
 
         if os.path.isfile(model_file):
             params = self.model.state_dict()
 
-            print("loading model from file: {}".format(model_file))
-            checkpt = torch.load(model_file, map_location=self.device)
+            self._log(f"loading model from file: {model_file}")
+            checkpt = torch.load(model_file, map_location=self.device, weights_only=False)
             state_dict = checkpt["state_dict"]
             params.update(state_dict)
             self.model.load_state_dict(params)
         else:
-            print("model file {} not found".format(model_file))
+            self._log(f"model file {model_file} not found")
 
         self.model = self.model.eval()
 
         return self
 
-    def init_optimizer(self, learning_rate, loss_fn, model_file=None):
-        """Loads model parameters from .pt file.
+    def init_optimizer(self, learning_rate, loss_fn, model_file=None,
+                       optim_cfg=None, total_iters=None):
+        """Initialize optimizer (and optional scheduler / AMP scaler).
 
-        Currently, only the PyTorch Adam optimizer is implemented.
+        When ``optim_cfg`` is None, the original Adam-only behavior is used
+        (this is the wavelet U-Net path). When ``optim_cfg`` is provided, it
+        configures the NAFNet path: AdamW + cosine LR schedule + optional AMP.
 
         Args:
-            learning_rate (double): The Adam learning rate.
-            loss_fn (torch.loss_fn): The PyTorch loss function
-                (e.g., torch.nn.MSELoss).
-            model_file (str): If not None, then loads the optimizer state from
-                the model file.
+            learning_rate (double): Base learning rate (used when optim_cfg is
+                None, or as a fallback if optim_cfg lacks 'learning_rate').
+            loss_fn (torch.loss_fn): The PyTorch loss function.
+            model_file (str): If not None, loads optimizer/scheduler/scaler
+                state from this checkpoint when present.
+            optim_cfg (dict, default=None): NAFNet optimizer config (see
+                configs/optim.yaml :: nafnet_optim).
+            total_iters (int, default=None): Total training iterations for
+                cosine annealing. Required when optim_cfg requests a scheduler.
 
         Returns:
             self
@@ -147,34 +161,124 @@ class DeGibbs(object):
         self.val_loss_min = np.inf
         self.loss_fn = loss_fn
 
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
+        # Defaults: wavelet path (Adam, no scheduler, no AMP, no grad clip).
+        self.scheduler = None
+        self.scaler = None
+        self.grad_clip = None
+        self.amp_dtype = None
 
-        if os.path.isfile(model_file) and model_file is not None:
-            print("loading optimizer from file: {}".format(model_file))
-            checkpt = torch.load(model_file)
+        if optim_cfg is None:
+            optimizer = torch.optim.Adam(
+                self.model.parameters(), lr=learning_rate
+            )
+            self.learning_rate = learning_rate
+        else:
+            opt_name = str(optim_cfg.get('optimizer', 'adamw')).lower()
+            lr = float(optim_cfg.get('learning_rate', learning_rate))
+            betas = tuple(optim_cfg.get('betas', (0.9, 0.9)))
+            weight_decay = float(optim_cfg.get('weight_decay', 0.0))
+
+            if opt_name == 'adamw':
+                optimizer = torch.optim.AdamW(
+                    self.model.parameters(),
+                    lr=lr, betas=betas, weight_decay=weight_decay,
+                )
+            elif opt_name == 'adam':
+                optimizer = torch.optim.Adam(
+                    self.model.parameters(),
+                    lr=lr, betas=betas, weight_decay=weight_decay,
+                )
+            else:
+                raise ValueError(
+                    f'Unsupported optimizer: {opt_name}'
+                )
+            self.learning_rate = lr
+
+            sched_name = optim_cfg.get('scheduler', None)
+            if sched_name is not None:
+                sched_name = str(sched_name).lower()
+                if sched_name == 'cosine':
+                    if total_iters is None or total_iters <= 0:
+                        raise ValueError(
+                            'total_iters must be > 0 for cosine scheduler'
+                        )
+                    eta_min = float(optim_cfg.get('eta_min', 0.0))
+                    self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                        optimizer, T_max=total_iters, eta_min=eta_min,
+                    )
+                else:
+                    raise ValueError(
+                        f'Unsupported scheduler: {sched_name}'
+                    )
+
+            gc = optim_cfg.get('grad_clip', None)
+            if gc is not None and float(gc) > 0:
+                self.grad_clip = float(gc)
+
+            if bool(optim_cfg.get('amp', False)):
+                amp_dtype_str = str(
+                    optim_cfg.get('amp_dtype', 'float16')
+                ).lower()
+                self.amp_dtype = {
+                    'float16': torch.float16,
+                    'fp16': torch.float16,
+                    'half': torch.float16,
+                    'bfloat16': torch.bfloat16,
+                    'bf16': torch.bfloat16,
+                }.get(amp_dtype_str, torch.float16)
+                # GradScaler is only needed for fp16. bf16 has fp32-like range.
+                if self.amp_dtype == torch.float16:
+                    self.scaler = torch.amp.GradScaler("cuda")
+
+        if model_file is not None and os.path.isfile(model_file):
+            self._log(f"loading optimizer from file: {model_file}")
+            checkpt = torch.load(model_file, map_location=self.device, weights_only=False)
 
             optimizer.load_state_dict(checkpt["optimizer"])
+            # Override LR from config so checkpoint LR never silently persists.
+            for pg in optimizer.param_groups:
+                pg['lr'] = lr
+                pg['initial_lr'] = lr
 
             self.epoch = checkpt["epoch"] + 1
             train_loss_min = self.train_loss_min
             try:
                 self.train_loss_min = checkpt["train_loss_min"]
-            except:
+            except KeyError:
                 self.train_loss_min = train_loss_min
             val_loss_min = self.val_loss_min
             try:
                 self.val_loss_min = checkpt["val_loss_min"]
-            except:
+            except KeyError:
                 self.val_loss_min = val_loss_min
-        elif not os.path.isfile(model_file):
-            print("model file {} not found".format(model_file))
 
-        if torch.cuda.device_count() > 1:
-            print("Let's use", torch.cuda.device_count(), "GPUS!")
-            self.model = torch.nn.DataParallel(self.model)
+            if self.scheduler is not None and 'scheduler' in checkpt:
+                try:
+                    self.scheduler.load_state_dict(checkpt['scheduler'])
+                except Exception as e:
+                    self._log(f'could not restore scheduler state: {e}')
+            if self.scaler is not None and 'scaler' in checkpt:
+                try:
+                    self.scaler.load_state_dict(checkpt['scaler'])
+                except Exception as e:
+                    self._log(f'could not restore grad scaler state: {e}')
+        elif model_file is not None:
+            self._log(f"model file {model_file} not found")
 
+        if dist.is_initialized():
+            local_rank = int(os.environ.get("LOCAL_RANK", 0))
+            self.model = self.model.to(local_rank)
+            self.model = torch.nn.parallel.DistributedDataParallel(
+                self.model, device_ids=[local_rank],
+                gradient_as_bucket_view=True)
+            self.device = torch.device(f"cuda:{local_rank}")
+            self._rank = local_rank
+            print(f"Using DDP on rank {local_rank}")
+
+        # Compile model for faster execution (PyTorch 2.0+)
+        if hasattr(torch, "compile") and not os.environ.get("TORCH_NO_COMPILE"):
+            self.model = torch.compile(self.model)
         self.optimizer = optimizer
-        self.learning_rate = learning_rate
 
         return self
 
@@ -220,8 +324,14 @@ class DeGibbs(object):
                 (not "model" in attr)
                 and (not "optimizer" in attr)
                 and (not "loss_fn" in attr)
+                and (attr not in ("scheduler", "scaler", "train_loader", "val_loader"))
             ):
                 state[attr] = value
+
+        if getattr(self, "scheduler", None) is not None:
+            state["scheduler"] = self.scheduler.state_dict()
+        if getattr(self, "scaler", None) is not None:
+            state["scaler"] = self.scaler.state_dict()
 
         torch.save(state, filename)
 
@@ -238,7 +348,7 @@ class DeGibbs(object):
             val_loss (double): Validation loss.
             visuals (dict): Dictionary visuals object with validation images.
         """
-        print("epoch {}: validation loop".format(self.epoch))
+        self._log(f"epoch {self.epoch}: validation loop")
         # set random seed
         torch.manual_seed(rnd_seed)
         np.random.seed(rnd_seed)
@@ -254,7 +364,7 @@ class DeGibbs(object):
         if all_metrics:
             metrics = {"mse": [], "ssim": [], "nmse": [], "psnr": []}
 
-        with torch.no_grad():
+        with torch.inference_mode():
             val_loss = 0
             counter = 0
             for i, val_batch in enumerate(self.val_loader):
@@ -287,15 +397,11 @@ class DeGibbs(object):
                         metrics["psnr"].append(MetricEval.psnr(nptarget, npest))
 
                 if (i / len(self.val_loader)) >= (disp_val / 10):
-                    print(
-                        "validation loop progress: {:.0f}%".format(
-                            100 * (i + 1) / len(self.val_loader)
-                        )
-                    )
+                    self._log(f"validation loop progress: {100 * (i + 1) / len(self.val_loader):.0f}%")
                     disp_counter += 1
                     disp_val = disp_frac_vec[disp_counter]
 
-            print("validation loop finished")
+            self._log("validation loop finished")
 
             dispind = 0
 
@@ -370,7 +476,7 @@ class DeGibbs(object):
             disp_loss (double): A display loss for the training data taken as
                 an average from the last few images.
         """
-        print("epoch {}: training loop".format(self.epoch))
+        self._log(f"epoch {self.epoch}: training loop")
         torch.manual_seed(rnd_seed)
         np.random.seed(rnd_seed)
         torch.cuda.manual_seed(rnd_seed)
@@ -387,11 +493,36 @@ class DeGibbs(object):
         for i, batch in enumerate(self.train_loader):
             target, dat = batch["target"].to(device), batch["dat"].to(device)
 
-            est = self.model(dat)
-            loss = self.loss_fn(est, target)
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
+            self.optimizer.zero_grad(set_to_none=True)
+
+            use_amp = self.amp_dtype is not None and device.type == 'cuda'
+            if use_amp:
+                with torch.amp.autocast("cuda", dtype=self.amp_dtype):
+                    est = self.model(dat)
+                    loss = self.loss_fn(est, target)
+            else:
+                est = self.model(dat)
+                loss = self.loss_fn(est, target)
+
+            if self.scaler is not None:
+                self.scaler.scale(loss).backward()
+                if self.grad_clip is not None:
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(), self.grad_clip
+                    )
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                loss.backward()
+                if self.grad_clip is not None:
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(), self.grad_clip
+                    )
+                self.optimizer.step()
+
+            if self.scheduler is not None:
+                self.scheduler.step()
 
             np_train_loss = loss.item()
             losses.append(np_train_loss)
@@ -400,16 +531,15 @@ class DeGibbs(object):
 
             global_iter = global_iter + 1
 
+            if self._rank == 0 and global_iter % 500 == 0:
+                self._log(f"  iter {global_iter}: rolling_loss={disp_loss:.6f}")
+
             if (i / len(self.train_loader)) >= (disp_val / 10):
-                print(
-                    "training loop progress: {:.0f}%".format(
-                        100 * (i + 1) / len(self.train_loader)
-                    )
-                )
+                self._log(f"training loop progress: {100 * (i + 1) / len(self.train_loader):.0f}%")
                 disp_counter += 1
                 disp_val = disp_frac_vec[disp_counter]
 
-        print("training loop finished")
+        self._log("training loop finished")
 
         dispind = 0
 
@@ -457,14 +587,14 @@ class DeGibbs(object):
         Returns:
             self
         """
-        print("starting training")
+        self._log("starting training")
 
-        if not exp_dir == None:
-            print("saving logs to {}".format(exp_dir))
+        if exp_dir is not None:
+            self._log(f"saving logs to {exp_dir}")
             writer = SummaryWriter(log_dir=exp_dir)
         visuals = {}
 
-        print("initializing loss tracking")
+        self._log("initializing loss tracking")
         epochs = []
         train_losses = []
         val_losses = []
@@ -483,12 +613,12 @@ class DeGibbs(object):
             if run_eval:
                 val_loss, visuals = self.run_val_loop(visuals, seed_offset)
 
-                if not exp_dir == None:
+                if exp_dir is not None:
                     writer.add_scalar(
                         "losses/eval_loss", scalar_value=val_loss, global_step=epoch
                     )
 
-            if not exp_dir == None:
+            if exp_dir is not None:
                 writer.add_scalar(
                     "losses/train_loss", scalar_value=train_loss, global_step=epoch
                 )
@@ -509,12 +639,12 @@ class DeGibbs(object):
                     self.val_loss_min = val_loss
                     checkname = os.path.join(exp_dir, "best_model.pt")
                 else:
-                    checkname = os.path.join(exp_dir, "model_epoch_{}.pt".format(epoch))
+                    checkname = os.path.join(exp_dir, f"model_epoch_{epoch}.pt")
             else:
                 if train_loss < self.train_loss_min:
                     checkname = os.path.join(exp_dir, "best_model.pt")
                 else:
-                    checkname = os.path.join(exp_dir, "model_epoch_{}.pt".format(epoch))
+                    checkname = os.path.join(exp_dir, f"model_epoch_{epoch}.pt")
 
             if train_loss < self.train_loss_min:
                 self.train_loss_min = train_loss
@@ -526,8 +656,8 @@ class DeGibbs(object):
 
             epoch_end = time.time()
 
-            print("epoch finished, time: {}".format(epoch_end - epoch_start))
-            print("validation loss: {}, training loss: {}".format(val_loss, train_loss))
+            self._log(f"epoch finished, time: {epoch_end - epoch_start}")
+            self._log(f"validation loss: {val_loss}, training loss: {train_loss}")
 
         return self
 
@@ -535,9 +665,9 @@ class DeGibbs(object):
         self.model = self.model.train()
         num_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
         out = "\n" + self.__class__.__name__ + "\n"
-        out += "model: {}".format(self.model.__class__.__name__)
-        out += "    number of trainable model parameters: {}".format(num_params)
-        out += "optimizer: {}".format(self.optimizer.__class__.__name__)
-        out += "train_data_dir: {}".format(self.train_data_dir)
+        out += f"model: {self.model.__class__.__name__}"
+        out += f"    number of trainable model parameters: {num_params}"
+        out += f"optimizer: {self.optimizer.__class__.__name__}"
+        out += f"train_data_dir: {self.train_data_dir}"
 
         return out

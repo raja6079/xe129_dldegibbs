@@ -41,7 +41,7 @@ class UNetWavelet(nn.Module):
     def __init__(self, nlayers=10, in_ch=2, out_ch=2, ndims=2, top_filtnum=64,
                  n_classes=False, resid=True, wave_concat=True, comp2mag=False,
                  leaky=False):
-        super(UNetWavelet, self).__init__()
+        super().__init__()
 
         if not ndims == 2:
             print('NOT TESTED FOR ANYTHING OTHER THAN 2D')
@@ -192,9 +192,9 @@ class DoubleConv(nn.Module):
     """
 
     def __init__(self, in_ch, out_ch, mid_ch=-1, ndims=2, leaky=False):
-        super(DoubleConv, self).__init__()
+        super().__init__()
 
-        if mid_ch is -1:
+        if mid_ch == -1:
             mid_ch = out_ch
             self.mid_ch = out_ch
 
@@ -262,7 +262,7 @@ class MidConv(nn.Module):
     """
 
     def __init__(self, in_ch, ndims=2, leaky=False):
-        super(MidConv, self).__init__()
+        super().__init__()
 
         self.in_ch = in_ch
         self.ndims = ndims
@@ -325,7 +325,7 @@ class InConv(nn.Module):
     """
 
     def __init__(self, in_ch, out_ch, ndims=2, leaky=False):
-        super(InConv, self).__init__()
+        super().__init__()
 
         self.in_ch = in_ch
         self.out_ch = out_ch
@@ -380,7 +380,7 @@ class DownConv(nn.Module):
     """
 
     def __init__(self, in_ch, out_ch, ndims=2, leaky=False):
-        super(DownConv, self).__init__()
+        super().__init__()
 
         self.in_ch = in_ch
         self.out_ch = out_ch
@@ -415,7 +415,7 @@ class ConcatDoubleConv(nn.Module):
     """
 
     def __init__(self, in_ch, out_ch, ndims=2, leaky=False):
-        super(ConcatDoubleConv, self).__init__()
+        super().__init__()
 
         self.in_ch = in_ch
         self.out_ch = out_ch
@@ -453,7 +453,7 @@ class OutConv(nn.Module):
     """
 
     def __init__(self, in_ch, out_ch, ndims=2):
-        super(OutConv, self).__init__()
+        super().__init__()
 
         self.ndims = ndims
         if (ndims == 2):

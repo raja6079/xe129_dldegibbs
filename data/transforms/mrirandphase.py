@@ -2,7 +2,7 @@ import numpy as np
 from scipy.ndimage import gaussian_filter
 
 
-class MriRandPhase(object):
+class MriRandPhase:
     """A transform class for applying random phase.
 
     This initializes and object that applies random phase to a set of input
@@ -97,9 +97,9 @@ class MriRandPhase(object):
                 ) * (bfn_size**2 * 2 * np.pi)
 
                 bfn_x0s = np.floor(np.random.uniform(
-                    high=dims[0], size=num_bfns)).astype(np.int)
+                    high=dims[0], size=num_bfns)).astype(int)
                 bfn_y0s = np.floor(np.random.uniform(
-                    high=dims[1], size=num_bfns)).astype(np.int)
+                    high=dims[1], size=num_bfns)).astype(int)
 
                 gauss_map[tuple([bfn_x0s, bfn_y0s])] = bfn_amps
 
@@ -142,7 +142,7 @@ def main():
     out_im = phaseob(sample)['dat'][0, ...]
     time_end = time.time()
 
-    print('sim time: {}'.format(time_end - time_start))
+    print(f'sim time: {time_end - time_start}')
 
     plt.imshow(np.angle(out_im))
     plt.gray()

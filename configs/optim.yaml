@@ -1,4 +1,17 @@
 training_params:
-  batch_size: 32
+  batch_size: 128
   num_epochs: 10
+  learning_rate: 0.0001
+
+# NAFNet-only optimizer / scheduler / AMP settings.
+# These are ignored when --model wavelet (default) is used.
+nafnet_optim:
+  optimizer: adamw
   learning_rate: 0.001
+  betas: [0.9, 0.999]
+  weight_decay: 0.0
+  scheduler: cosine
+  eta_min: 1.0e-7
+  grad_clip: 1.0
+  amp: false
+  amp_dtype: float16

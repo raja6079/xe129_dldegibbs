@@ -1,0 +1,29 @@
+# Modern DeGibbs Dependencies
+# PyTorch 2.0+ (install separately based on CUDA version)
+# See: https://pytorch.org/get-started/locally/
+torch>=2.0.0
+torchvision>=0.15.0
+
+# PyTorch Lightning
+pytorch-lightning>=2.0.0
+
+# Wavelets
+PyWavelets>=1.4.0
+
+# Data/Image processing
+numpy>=1.24.0
+scipy>=1.10.0
+Pillow>=9.4.0
+
+# Logging & Visualization
+tensorboard>=2.12.0
+rich>=13.0.0
+
+# Configuration
+PyYAML>=6.0
+
+# Progress bars
+tqdm>=4.65.0
+
+# Optional: Weights & Biases
+# wandb>=0.15.0

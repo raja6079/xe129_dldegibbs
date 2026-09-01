@@ -1,9 +1,8 @@
 """ A collection of neural network utilities for MRI in PyTorch.
 
 Functions include:
-    fftshift - applies n/2 circulant shift on batched PyTorch tensors
-    ifftshift - applies n/2 circulant inverse shift on batched PyTorch
-        tensors
+    fftshift - torch.fft.fftshift (built-in)
+    ifftshift - torch.fft.ifftshift (built-in)
     back_fft - applies fftshift(ifft(ifftshift(input))) in PyTorch
     dwt2d - applies 2D discrete wavelet transform
     idwt2d - applies inverse 2D discrete wavelet transform
@@ -16,121 +15,37 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class roll_fftshift(nn.Module):
-    def __init__(self, axis=0):
-        super(roll_fftshift, self).__init__()
-        self.axis = axis
-
-    def forward(self, x):
-        dim_size = x.size(self.axis)
-
-        shift = dim_size//2
-
-        after_start = dim_size - shift
-        if shift < 0:
-            after_start = -shift
-            shift = dim_size - abs(shift)
-
-        before = x.narrow(self.axis, 0, dim_size - shift)
-        after = x.narrow(self.axis, after_start, shift)
-        return torch.cat([after, before], self.axis)
-
-
-class roll_ifftshift(nn.Module):
-    def __init__(self, axis=0):
-        super(roll_ifftshift, self).__init__()
-        self.axis = axis
-
-    def forward(self, x):
-        dim_size = x.size(self.axis)
-
-        shift = (dim_size+1)//2
-
-        after_start = dim_size - shift
-        if shift < 0:
-            after_start = -shift
-            shift = dim_size - abs(shift)
-
-        before = x.narrow(self.axis, 0, dim_size - shift)
-        after = x.narrow(self.axis, after_start, shift)
-        return torch.cat([after, before], self.axis)
-
-
-class fftshift(nn.Module):
-    def __init__(self, ndims, startdim=2):
-        super(fftshift, self).__init__()
-        self.startdim = startdim
-        self.ndims = ndims
-        self.roll_list = nn.ModuleList()
-
-        for dim in range(self.startdim, ndims):
-            self.roll_list.append(roll_fftshift(axis=dim))
-
-    def forward(self, x):
-        for cur_roll in self.roll_list:
-            x = cur_roll(x)
-        return x
-
-
-class ifftshift(nn.Module):
-    def __init__(self, ndims, startdim=2):
-        super(ifftshift, self).__init__()
-        self.startdim = startdim
-        self.ndims = ndims
-        self.roll_list = nn.ModuleList()
-
-        for dim in range(self.startdim, ndims):
-            self.roll_list.append(roll_ifftshift(axis=dim))
-
-    def forward(self, x):
-        for cur_roll in self.roll_list:
-            x = cur_roll(x)
-        return x
-
-
 class back_fft(nn.Module):
+    """Applies fftshift(ifftn(ifftshift(input))) using native complex tensors.
+
+    Input tensor shape: [B, 2, ...] where channel 0 = real, channel 1 = imag.
+    Output tensor shape: same as input.
+    """
+
     def __init__(self, ndims, startdim=2):
-        super(back_fft, self).__init__()
+        super().__init__()
         self.ndims = ndims
         self.startdim = startdim
-        self.ishift = ifftshift(ndims=ndims, startdim=startdim)
-        self.fshift = fftshift(ndims=ndims, startdim=startdim)
+        # For ndims=4 (B,C,H,W): after removing channel dim, spatial are (1,2)
+        self.fft_dims = tuple(range(startdim - 1, ndims - 2 + startdim - 1))
 
     def forward(self, x):
-        x = self.ishift(x)
-
-        if (self.ndims == 4):
-            x = x.permute(0, 2, 3, 1)
-        elif (self.ndims == 5):
-            x = x.permute(0, 2, 3, 4, 1)
-        elif (self.ndims == 6):
-            x = x.permute(0, 2, 3, 4, 5, 1)
-        else:
-            raise ValueError('ndim = %d not supported!' % self.ndims)
-
-        x = torch.ifft(x, self.ndims - 2)
-
-        if (self.ndims == 4):
-            x = x.permute(0, 3, 1, 2)
-        elif (self.ndims == 5):
-            x = x.permute(0, 4, 1, 2, 3)
-        elif (self.ndims == 6):
-            x = x.permute(0, 2, 3, 4, 5, 1)
-        else:
-            raise ValueError('ndim = %d not supported!' % self.ndims)
-
-        x = self.fshift(x)
-
-        return x
+        # Convert [B, 2, ...] real tensor to [B, ...] complex tensor
+        x_complex = torch.complex(x[:, 0], x[:, 1])
+        x_complex = torch.fft.ifftshift(x_complex, dim=self.fft_dims)
+        x_complex = torch.fft.ifftn(x_complex, dim=self.fft_dims)
+        x_complex = torch.fft.fftshift(x_complex, dim=self.fft_dims)
+        # Convert back to [B, 2, ...] real tensor
+        return torch.stack([x_complex.real, x_complex.imag], dim=1)
 
 
 class dwt2d(nn.Module):
     def __init__(self, channels=1, wtype='haar', levels=1):
-        super(dwt2d, self).__init__()
-        if wtype is 'haar':
+        super().__init__()
+        if wtype == 'haar':
             wt = pywt.Wavelet(wtype)
-            dec_hi = torch.DoubleTensor(wt.dec_hi[::-1])
-            dec_lo = torch.DoubleTensor(wt.dec_lo[::-1])
+            dec_hi = torch.tensor(wt.dec_hi[::-1], dtype=torch.float64)
+            dec_lo = torch.tensor(wt.dec_lo[::-1], dtype=torch.float64)
         else:
             print('filter type not found!')
 
@@ -150,7 +65,7 @@ class dwt2d(nn.Module):
         self.levels = levels
 
     def forward(self, x, levels=-1):
-        if levels is -1:
+        if levels == -1:
             levels = self.levels
 
         h = x.size(2)
@@ -169,11 +84,11 @@ class dwt2d(nn.Module):
 
 class idwt2d(nn.Module):
     def __init__(self, channels=1, wtype='haar', levels=1, maxgroup=False):
-        super(idwt2d, self).__init__()
-        if wtype is 'haar':
+        super().__init__()
+        if wtype == 'haar':
             wt = pywt.Wavelet(wtype)
-            rec_hi = torch.DoubleTensor(wt.rec_hi)
-            rec_lo = torch.DoubleTensor(wt.rec_lo)
+            rec_hi = torch.tensor(wt.rec_hi, dtype=torch.float64)
+            rec_lo = torch.tensor(wt.rec_lo, dtype=torch.float64)
         else:
             print('filter type not found!')
 
@@ -194,7 +109,7 @@ class idwt2d(nn.Module):
         self.levels = levels
 
     def forward(self, x, levels=-1):
-        if levels is -1:
+        if levels == -1:
             levels = self.levels
 
         h = x.size(2)

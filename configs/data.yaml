@@ -1,6 +1,9 @@
-exp_dir: "/Users/honghsilee/Documents/GitHub/dldegibbs/trained_models/res_256_to_100"
+exp_dir: "/home/raja/xe129_denoising_project/experiments_dldegibbs"
 
 train_data:
-  train_data_dir: "/gpfs/data/cbi/shared/unpacked_imagenet/"
-  test_data_dir: "/gpfs/data/cbi/shared/unpacked_imagenet/2019_04_12_imagenet2013test"
-  workers_per_gpu: 10
+  # Parent of train/ and val/ — ImageFolder discovers class subdirs
+  # automatically. train/ has 1000 ImageNet class folders; val/ has a
+  # single 'images/' folder (treated as one class).
+  train_data_dir: "/home/raja/xe129_denoising_project/data_dldegibbs/"
+  test_data_dir:  "/home/raja/xe129_denoising_project/data_dldegibbs/test/"
+  workers_per_gpu: 4

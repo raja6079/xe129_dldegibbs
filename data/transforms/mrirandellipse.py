@@ -1,7 +1,7 @@
 import numpy as np
 
 
-class MriRandEllipse(object):
+class MriRandEllipse:
     """Apply random ellipse crop.
 
     Args:

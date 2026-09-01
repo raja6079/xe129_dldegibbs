@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 
-class RandFlip(object):
+class RandFlip:
     """Random flipping in each dimension.
 
     Args:

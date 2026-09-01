@@ -3,6 +3,8 @@ import sys
 
 import numpy as np
 import torch
+import torch.distributed as dist
+from torch.utils.data.distributed import DistributedSampler
 
 from . import transforms
 from .imagenet import ImageNet
@@ -67,6 +69,13 @@ def init_loaders(exp_type, data_dir, batch_size, num_workers, gibb_size,
         orig_big = (orig_big, orig_big)
 
     # build the transforms
+    if 'spiral' in exp_type:
+        transform_set = transforms.Compose(
+            _build_spiral_transforms(exp_type, gibb_size, orig_big, dtype))
+        return _build_spiral_dataloaders(
+            train_dir, val_dir, orig_big, transform_set,
+            batch_size, num_workers)
+
     transform_set = []
 
     # random flip
@@ -102,10 +111,10 @@ def init_loaders(exp_type, data_dir, batch_size, num_workers, gibb_size,
 
     # partial Fourier mask
     # no apodization included - may want to reconsider for some cases
-    print('pe_fact is {}'.format(pe_fact))
+    print(f'pe_fact is {pe_fact}')
     mask = np.ones(shape=gibb_size)
-    pe_max = np.floor(gibb_size[1]*(1 - (1-pe_fact)/2)).astype(np.int)
-    print('gibbs pe_max is {}'.format(pe_max))
+    pe_max = np.floor(gibb_size[1]*(1 - (1-pe_fact)/2)).astype(int)
+    print(f'gibbs pe_max is {pe_max}')
     num_keep = (pe_max * pf_fact) // 8
     mask[:, (num_keep+1):] = 0
     mask[:, :-pe_max] = 0
@@ -113,8 +122,8 @@ def init_loaders(exp_type, data_dir, batch_size, num_workers, gibb_size,
 
     if 'lores' in exp_type:
         mask_lores = np.ones(shape=orig_big)
-        pe_max = np.floor(orig_big[1]*(1 - (1-pe_fact)/2)).astype(np.int)
-        print('orig pe_max is {}'.format(pe_max))
+        pe_max = np.floor(orig_big[1]*(1 - (1-pe_fact)/2)).astype(int)
+        print(f'orig pe_max is {pe_max}')
         num_keep = (pe_max * pf_fact) // 8
         mask_lores[:, (num_keep+1):] = 0
         mask_lores[:, :-pe_max] = 0
@@ -185,23 +194,123 @@ def init_loaders(exp_type, data_dir, batch_size, num_workers, gibb_size,
         transform=transform_set
     )
 
-    print('train dataset size: {}, val_dataset size: {}'.format(
-        len(dataset), len(val_dataset)))
+    print(f'train dataset size: {len(dataset)}, val_dataset size: {len(val_dataset)}')
+
+    use_ddp = dist.is_initialized()
+    train_sampler = DistributedSampler(dataset, shuffle=True) if use_ddp else None
+    val_sampler = DistributedSampler(val_dataset, shuffle=False) if use_ddp else None
 
     train_loader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
-        shuffle=True,
+        shuffle=(train_sampler is None),
+        sampler=train_sampler,
         num_workers=num_workers,
         pin_memory=True,
+        persistent_workers=(num_workers > 0),
         worker_init_fn=worker_init_fn
     )
     val_loader = torch.utils.data.DataLoader(
         val_dataset,
         batch_size=batch_size,
         shuffle=False,
+        sampler=val_sampler,
         num_workers=num_workers,
         pin_memory=True,
+        persistent_workers=(num_workers > 0),
+        worker_init_fn=worker_init_fn
+    )
+
+    return train_loader, val_loader
+
+
+def _build_spiral_transforms(exp_type, gibb_size, orig_big, dtype):
+    """Build the transform list for stack-of-spirals (s3d) artifact training.
+
+    The clean image is downsampled with the same centered k-space crop used by
+    the Gibbs pipeline, then `MriSpiral` corrupts only `dat` (PSF + colored
+    noise + kz coupling) while `target` is kept clean.
+    """
+    transform_set = []
+
+    # data augmentation (image domain)
+    transform_set.append(transforms.RandFlip(targ_op=True))
+    transform_set.append(transforms.RandTranspose(targ_op=True))
+    if any(np.array(orig_big) > 256):
+        transform_set.append(transforms.MriRandPhaseBig(targ_op=True))
+    else:
+        transform_set.append(transforms.MriRandPhase(targ_op=True))
+    transform_set.append(transforms.MriRandEllipse(targ_op=True))
+
+    # downsample the clean image via centered k-space crop (matches Gibbs res.)
+    transform_set.append(
+        transforms.MriFFT(unitary=True, targ_op=True, sigflag=False))
+    scale = np.prod(np.sqrt(np.array(gibb_size) / np.array(orig_big)))
+    transform_set.append(
+        transforms.MriCrop(crop_sz=gibb_size, scale=scale, targ_op=True))
+    transform_set.append(
+        transforms.MriInverseFFT(unitary=True, targ_op=True))
+
+    # spiral artifact simulation (corrupts 'dat'; 'target' stays clean)
+    transform_set.append(transforms.MriSpiral(dat_op=True, targ_op=False))
+
+    # normalize both arrays by the (corrupted) data maximum
+    transform_set.append(
+        transforms.MriNormalize(percentile_norm='Max', targ_op=True))
+
+    # magnitude vs complex output
+    if 'magnitude' in exp_type:
+        transform_set.append(
+            transforms.MriAbsolute(targ_op=True, dat_op=True))
+
+    # convert to tensor (real/imag split for complex; channel dim for magnitude)
+    transform_set.append(
+        transforms.ComplexToTensor(pf_flag=False, dtype=dtype))
+
+    return transform_set
+
+
+def _build_spiral_dataloaders(train_dir, val_dir, orig_big, transform_set,
+                              batch_size, num_workers):
+    """Construct train/val DataLoaders for the spiral pipeline."""
+    dataset = ImageNet(
+        root_dir=train_dir,
+        crop_sz=orig_big,
+        transform=transform_set
+    )
+    val_dataset = ImageNet(
+        root_dir=val_dir,
+        crop_sz=orig_big,
+        transform=transform_set
+    )
+
+    print(f'train dataset size: {len(dataset)}, '
+          f'val_dataset size: {len(val_dataset)}')
+
+    use_ddp = dist.is_initialized()
+    train_sampler = DistributedSampler(dataset, shuffle=True) \
+        if use_ddp else None
+    val_sampler = DistributedSampler(val_dataset, shuffle=False) \
+        if use_ddp else None
+
+    train_loader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=(train_sampler is None),
+        sampler=train_sampler,
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=(num_workers > 0),
+        worker_init_fn=worker_init_fn
+    )
+    val_loader = torch.utils.data.DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        sampler=val_sampler,
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=(num_workers > 0),
         worker_init_fn=worker_init_fn
     )
 
